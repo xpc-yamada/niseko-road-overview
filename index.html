@@ -151,6 +151,12 @@
   .route-pin:hover{ z-index:7; }
   .route-pin.confirmed{ cursor:pointer; }
   .route-pin.confirmed .dot{ cursor:pointer; }
+  .route-pin.invisible .dot{
+    width:22px; height:22px; background:transparent; border:none; box-shadow:none;
+    transform:translateY(0); border-radius:0;
+  }
+  .route-pin.invisible:hover .dot{ transform:translateY(0); }
+  .route-pin.invisible .flabel{ bottom:18px; }
   .pin.hover-pin .label{ opacity:0; pointer-events:none; transition:opacity .12s; }
   .pin.hover-pin .dot{ animation:none; }
   .pin.hover-pin:hover .label{ opacity:1; }
@@ -561,14 +567,15 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
   // 道路網図（管内図／市街図）表示中は、ピンの代わりに図面上の路線名表記そのものに
   // カーソルを合わせると名称が出て、6路線は図面ページへ移動できるようにする
   // （密集した文字の上にピンを重ねると見づらくなるため）。
-  function buildRouteHoverLayer(points){
+  function buildRouteHoverLayer(points, invisible){
     const group = L.layerGroup();
     points.forEach(function(p){
       const confirmedClass = p.confirmed ? ' confirmed' : '';
+      const invisibleClass = invisible ? ' invisible' : '';
       const labelHtml = p.confirmed
         ? (p.name + '<div class="rp-sub">クリックで図面を見る →</div>')
         : p.name;
-      const html = '<div class="route-pin' + confirmedClass + '" tabindex="0">' +
+      const html = '<div class="route-pin' + confirmedClass + invisibleClass + '" tabindex="0">' +
         '<span class="flabel">' + labelHtml + '</span><div class="dot"></div></div>';
       const icon = L.divIcon({ className:'', html: html, iconSize:[1,1], iconAnchor:[5,5] });
       const marker = L.marker([p.lat, p.lng], {icon: icon});
@@ -585,8 +592,10 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
     });
     return group;
   }
-  const kannaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.kannai);
-  const shigaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.shigai);
+  // 管内図は広域で路線数が多く、見える点を並べると却って煩雑になるため、
+  // 透明な当たり判定のみ（ホバーで名前が浮かぶ）にする。市街図は見える点のまま。
+  const kannaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.kannai, true);
+  const shigaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.shigai, false);
 
   // placeholders (approximate position, editable)
   const placeholders = [
