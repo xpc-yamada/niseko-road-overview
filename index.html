@@ -72,6 +72,20 @@
     border-radius:6px; padding:10px 12px; background:#fafcfc;
   }
 
+  .howto{
+    border:1px solid var(--line); border-radius:6px; background:#F5FAFB; margin:14px 0 0;
+  }
+  .howto summary{
+    cursor:pointer; font-size:12px; font-weight:700; color:var(--navy); padding:9px 12px;
+    list-style:none; user-select:none; display:flex; align-items:center; gap:6px;
+  }
+  .howto summary::-webkit-details-marker{ display:none; }
+  .howto summary::before{ content:'▸'; color:var(--accent); font-size:10px; transition:transform .15s; }
+  .howto[open] summary::before{ transform:rotate(90deg); }
+  .howto ul{ margin:0; padding:2px 14px 12px 28px; font-size:11.5px; line-height:1.8; color:var(--ink); }
+  .howto li{ margin:2px 0; }
+  .howto li b{ color:var(--navy); }
+
   dl.spec{ margin:0; font-size:13px; line-height:1.6; }
   dl.spec dt{ color:var(--muted); font-size:11px; letter-spacing:.06em; margin-top:10px; }
   dl.spec dt:first-child{ margin-top:0; }
@@ -119,6 +133,24 @@
     border-radius:6px; letter-spacing:.02em; box-shadow:0 2px 6px rgba(0,0,0,.25);
   }
   .pin:hover .dot{ filter:brightness(1.1); }
+  .route-pin{ position:relative; z-index:4; cursor:default; }
+  .route-pin .dot{
+    width:9px; height:9px; background:var(--amber); border:1.5px solid #fff;
+    border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:transform .1s;
+    transform:translateY(9px); /* 路線名の文字そのものと重ならないよう少し下にずらす */
+  }
+  .route-pin:hover .dot{ transform:translateY(9px) scale(1.4); }
+  .route-pin .flabel{
+    position:absolute; bottom:15px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    background:var(--navy); color:#fff; font-size:12.5px; font-weight:700; padding:7px 13px;
+    border-radius:6px; letter-spacing:.02em; box-shadow:0 2px 6px rgba(0,0,0,.3); text-align:center;
+    opacity:0; pointer-events:none; transition:opacity .12s; z-index:6;
+  }
+  .route-pin .flabel .rp-sub{ font-size:10.5px; font-weight:400; color:#A9C6A0; margin-top:2px; }
+  .route-pin:hover .flabel{ opacity:1; }
+  .route-pin:hover{ z-index:7; }
+  .route-pin.confirmed{ cursor:pointer; }
+  .route-pin.confirmed .dot{ cursor:pointer; }
   .pin.hover-pin .label{ opacity:0; pointer-events:none; transition:opacity .12s; }
   .pin.hover-pin .dot{ animation:none; }
   .pin.hover-pin:hover .label{ opacity:1; }
@@ -244,7 +276,20 @@
   <div class="sidebar">
     <p class="desc">ニセコ町全体の地図から、道路をクリックすると、その道路台帳の詳細情報（住所・橋梁・図面データなど）を確認できるイメージです。地理院地図と同じ地図データを使用しており、拡大するほど詳細に表示されます。「田下通」「藤山北通」「新市街東一条通」「役場前通」「製麻会社通」「ルベシベ通」の6路線が実際に動作します。</p>
 
-    <p class="panel-title first">ニセコ町 基本情報</p>
+    <details class="howto">
+      <summary>使い方（タップで開く）</summary>
+      <ul>
+        <li><b>地図の種類：</b>左下のボタンで「国土地理院地図」「道路網図（管内図）」「道路網図（市街図）」の3種類を切替</li>
+        <li><b>緑色の点：</b>公共施設。カーソルを合わせる（スマホは軽くタップ）と名称・住所を表示</li>
+        <li><b>オレンジ色のピン：</b>6路線の道路。クリックでその路線の図面ページへ移動</li>
+        <li><b>白地に✓のピン：</b>位置が確定（ロック）済みの路線</li>
+        <li><b>編集モード：</b>右上のチェックを入れるとピンをドラッグで移動可能に。もう一度ピンをクリックすると確定（ロック）⇄解除を切替</li>
+        <li><b>座標を書き出す：</b>現在の全ピン位置をJSONファイルとして保存</li>
+        <li><b>⟲（リセット）：</b>国土地理院地図に戻り、全ピンが収まる初期表示に戻す</li>
+      </ul>
+    </details>
+
+    <p class="panel-title">ニセコ町 基本情報</p>
     <dl class="spec">
       <dt>所在地</dt>
       <dd>〒048-1595<br>北海道虻田郡ニセコ町字富士見55番地</dd>
@@ -378,17 +423,24 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
   // 道路網図（画像オーバーレイ）は範囲が限られているため、選択中はその範囲の外へ
   // パン／ズームアウトできないよう制限する（範囲外の空白に施設ピンだけが浮いて
   // 見えてしまうのを防ぐため）。国土地理院地図に戻すと制限を解除する。
-  function restrictToImage(bounds, nativeMaxZoom, pad){
+  function restrictToImage(bounds, extraZoomLevels, pad, initialZoomOffset, flyDuration){
+    initialZoomOffset = initialZoomOffset || 0;
+    flyDuration = (flyDuration === undefined) ? 0.6 : flyDuration;
     // 前のレイヤーのmin/maxZoom制限が残ったままだと、これから計算するfitZoomが
     // その制限に引きずられて誤った値になるため、計算前に一旦制限を解除しておく。
     map.setMinZoom(0);
     map.setMaxZoom(18);
     map.setMaxBounds(null);
     const fitZoom = map.getBoundsZoom(bounds, false);
-    map.setMinZoom(fitZoom);
-    map.setMaxZoom(Math.max(fitZoom, nativeMaxZoom));
+    // 位置合わせの誤差は画面上での縮尺（ズーム）が上がるほど目立つため、
+    // 全体表示からの追加ズーム幅を抑えて、誤差が目立ちにくい範囲に留める。
+    map.setMaxZoom(fitZoom + extraZoomLevels);
+    // 初期表示のズーム（文字が読みやすい少し拡大した状態）を、そのまま
+    // ズームアウトの下限にもする＝初期表示より広い範囲は見せない。
+    map.setMinZoom(fitZoom + initialZoomOffset);
     map.setMaxBounds(L.latLngBounds(bounds).pad(pad));
-    map.flyToBounds(bounds, {duration:0.6});
+    const center = L.latLngBounds(bounds).getCenter();
+    map.flyTo(center, fitZoom + initialZoomOffset, {duration:flyDuration});
   }
   function releaseRestriction(){
     map.setMaxBounds(null);
@@ -396,19 +448,42 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
     map.setMaxZoom(18);
   }
 
-  map.on('baselayerchange', function(e){
-    if(e.layer === kannaiLayer){
-      // 管内図は解像度が粗いため、実際の画像解像度を超えてぼやけないようズーム上限を抑える
-      restrictToImage(kannaiBounds, 15, 0.08);
-    } else if(e.layer === shigaiLayer){
-      restrictToImage(shigaiBounds, 18, 0.05);
+  // 選んでいた地図の種類をブラウザに記憶し、道路台帳の詳細ページから戻ってきた際に
+  // （ページが再読み込みされるため）直前に見ていた地図のまま復元する。
+  const LAYER_KEY = 'niseko_selected_layer';
+  function activateLayer(layer, flyDuration){
+    if(map.hasLayer(roadPinsLayer)) map.removeLayer(roadPinsLayer);
+    if(map.hasLayer(kannaiHoverLayer)) map.removeLayer(kannaiHoverLayer);
+    if(map.hasLayer(shigaiHoverLayer)) map.removeLayer(shigaiHoverLayer);
+
+    if(layer === kannaiLayer){
+      // 管内図は広域図のため位置合わせの誤差が相対的に大きく、ズームしすぎるとピンのズレが
+      // 目立ってしまう。全体表示から+2段階までに制限し、初期表示は文字が読みやすい+1段階から開始する
+      restrictToImage(kannaiBounds, 2, 0.08, 1, flyDuration);
+      map.addLayer(kannaiHoverLayer);
+    } else if(layer === shigaiLayer){
+      // 道路ピンの位置ズレが目立たない範囲までズーム上限を抑え、初期表示もやや拡大した状態から開始する
+      restrictToImage(shigaiBounds, 1, 0.05, 0.5, flyDuration);
+      map.addLayer(shigaiHoverLayer);
     } else {
       releaseRestriction();
+      map.addLayer(roadPinsLayer);
     }
+  }
+
+  // L.control.layersは自身の初期化時にも一度baselayerchangeを発火するため、
+  // 復元処理が完了するまでは保存を行わない（保存前の値を上書きしてしまうのを防ぐ）。
+  let layerPersistenceReady = false;
+  map.on('baselayerchange', function(e){
+    activateLayer(e.layer);
+    if(!layerPersistenceReady) return;
+    const layerName = Object.keys(baseMaps).find(function(k){ return baseMaps[k] === e.layer; });
+    try { localStorage.setItem(LAYER_KEY, layerName); } catch(err){}
   });
 
   L.control.zoom({position:'topright'}).addTo(map);
 
+  const ROUTE_HOVER_DATA = {"kannai": [{"name": "温泉藻岩連絡線", "lat": 42.850054, "lng": 140.626459, "confirmed": false}, {"name": "東山三号通", "lat": 42.836744, "lng": 140.683199, "confirmed": false}, {"name": "藤山北通", "lat": 42.83199, "lng": 140.637567, "confirmed": true}, {"name": "西山滝台連絡線", "lat": 42.828444, "lng": 140.690494, "confirmed": false}, {"name": "中央有島連絡線", "lat": 42.819562, "lng": 140.707102, "confirmed": false}, {"name": "西山尾ノ上連絡線", "lat": 42.818196, "lng": 140.665419, "confirmed": false}, {"name": "有島北一号線", "lat": 42.81421, "lng": 140.704438, "confirmed": false}, {"name": "田下通", "lat": 42.811571, "lng": 140.655428, "confirmed": true}, {"name": "西山会館通", "lat": 42.810951, "lng": 140.678903, "confirmed": false}, {"name": "瑞穂昆布連絡線", "lat": 42.784868, "lng": 140.610945, "confirmed": false}, {"name": "宮田旧国道線", "lat": 42.784466, "lng": 140.673256, "confirmed": false}, {"name": "富川名無川通", "lat": 42.783202, "lng": 140.654161, "confirmed": false}, {"name": "七号国道連絡線", "lat": 42.783297, "lng": 140.664767, "confirmed": false}, {"name": "二号線", "lat": 42.781633, "lng": 140.612664, "confirmed": false}, {"name": "福井南三線通", "lat": 42.778494, "lng": 140.627614, "confirmed": false}, {"name": "第二南三線通", "lat": 42.777514, "lng": 140.616409, "confirmed": false}, {"name": "別太小花井連絡線", "lat": 42.778434, "lng": 140.700367, "confirmed": false}, {"name": "黒川旧国道", "lat": 42.772782, "lng": 140.649408, "confirmed": false}, {"name": "赤金通", "lat": 42.772518, "lng": 140.664513, "confirmed": false}, {"name": "小花井墓地通", "lat": 42.764679, "lng": 140.688808, "confirmed": false}, {"name": "新福島通", "lat": 42.754745, "lng": 140.660301, "confirmed": false}, {"name": "板谷東通", "lat": 42.759819, "lng": 140.65422, "confirmed": false}, {"name": "新区画通", "lat": 42.838889, "lng": 140.643367, "confirmed": false}, {"name": "一号線", "lat": 42.836262, "lng": 140.678317, "confirmed": false}, {"name": "北栄東通線", "lat": 42.833101, "lng": 140.668718, "confirmed": false}, {"name": "新東山滝台連絡線", "lat": 42.833103, "lng": 140.701613, "confirmed": false}, {"name": "新区画通", "lat": 42.831189, "lng": 140.651872, "confirmed": false}, {"name": "北栄中通", "lat": 42.824569, "lng": 140.670069, "confirmed": false}, {"name": "西山西通", "lat": 42.818083, "lng": 140.673352, "confirmed": false}, {"name": "西富北通", "lat": 42.800739, "lng": 140.62675, "confirmed": false}, {"name": "元町三線通", "lat": 42.801324, "lng": 140.712055, "confirmed": false}, {"name": "二号線", "lat": 42.787445, "lng": 140.616942, "confirmed": false}, {"name": "川宮通", "lat": 42.786949, "lng": 140.676253, "confirmed": false}, {"name": "国道六号連絡線", "lat": 42.769581, "lng": 140.645156, "confirmed": false}, {"name": "新福島通", "lat": 42.770006, "lng": 140.656434, "confirmed": false}, {"name": "上昆布道路二号線", "lat": 42.756458, "lng": 140.583395, "confirmed": false}, {"name": "新東山一号線", "lat": 42.843429, "lng": 140.689418, "confirmed": false}, {"name": "羊蹄第一旧国道", "lat": 42.845565, "lng": 140.735646, "confirmed": false}, {"name": "大曲線", "lat": 42.840929, "lng": 140.731551, "confirmed": false}, {"name": "羊蹄第二旧国道", "lat": 42.833093, "lng": 140.735947, "confirmed": false}, {"name": "ニセコ南西通", "lat": 42.803287, "lng": 140.65539, "confirmed": false}, {"name": "富川七線通", "lat": 42.798039, "lng": 140.654188, "confirmed": false}, {"name": "三号線", "lat": 42.792441, "lng": 140.622977, "confirmed": false}, {"name": "豊里東通", "lat": 42.787045, "lng": 140.732302, "confirmed": false}, {"name": "別太通", "lat": 42.784167, "lng": 140.692852, "confirmed": false}, {"name": "桜ヶ丘通", "lat": 42.781167, "lng": 140.685769, "confirmed": false}, {"name": "宮田学校通", "lat": 42.776992, "lng": 140.670974, "confirmed": false}, {"name": "更新道路", "lat": 42.768234, "lng": 140.607655, "confirmed": false}, {"name": "福井五十万連絡線", "lat": 42.768391, "lng": 140.627406, "confirmed": false}, {"name": "百三十万通", "lat": 42.763961, "lng": 140.66493, "confirmed": false}, {"name": "ニセコ登山道路", "lat": 42.8495, "lng": 140.649334, "confirmed": false}, {"name": "第二温泉藻岩連絡線", "lat": 42.844671, "lng": 140.617512, "confirmed": false}, {"name": "北台道路", "lat": 42.829277, "lng": 140.679049, "confirmed": false}, {"name": "西北連絡線", "lat": 42.826081, "lng": 140.662699, "confirmed": false}, {"name": "近藤中央通", "lat": 42.813621, "lng": 140.749546, "confirmed": false}, {"name": "羊栄中通", "lat": 42.803585, "lng": 140.745099, "confirmed": false}, {"name": "照覚寺前通", "lat": 42.790668, "lng": 140.698404, "confirmed": false}, {"name": "近藤軌道線", "lat": 42.789919, "lng": 140.752414, "confirmed": false}, {"name": "別太通", "lat": 42.784859, "lng": 140.709512, "confirmed": false}, {"name": "福井六号線通", "lat": 42.784395, "lng": 140.643275, "confirmed": false}, {"name": "福井五号線通", "lat": 42.780166, "lng": 140.635151, "confirmed": false}, {"name": "松岡通", "lat": 42.801784, "lng": 140.701239, "confirmed": false}, {"name": "藤山東通線", "lat": 42.816793, "lng": 140.65196, "confirmed": false}, {"name": "富川七号線通", "lat": 42.78904, "lng": 140.659432, "confirmed": false}, {"name": "更新道路", "lat": 42.759749, "lng": 140.620486, "confirmed": false}, {"name": "ルベシベ通", "lat": 42.791642, "lng": 140.640339, "confirmed": true}], "shigai": [{"name": "中央東通", "lat": 42.809681, "lng": 140.688799, "confirmed": false}, {"name": "芙蓉荘前通", "lat": 42.808918, "lng": 140.682721, "confirmed": false}, {"name": "駅前西三線通", "lat": 42.806857, "lng": 140.683748, "confirmed": false}, {"name": "望羊団地通", "lat": 42.805744, "lng": 140.697989, "confirmed": false}, {"name": "第二西三条中通", "lat": 42.805801, "lng": 140.682455, "confirmed": false}, {"name": "南東三条通", "lat": 42.804582, "lng": 140.689988, "confirmed": false}, {"name": "綺羅団地通", "lat": 42.801526, "lng": 140.685582, "confirmed": false}, {"name": "東三条中通", "lat": 42.805137, "lng": 140.688891, "confirmed": false}, {"name": "駅構内軌道線", "lat": 42.804764, "lng": 140.680845, "confirmed": false}, {"name": "中学校通", "lat": 42.803835, "lng": 140.694974, "confirmed": false}, {"name": "本通団地二号線", "lat": 42.802368, "lng": 140.686193, "confirmed": false}, {"name": "しらかば四号通", "lat": 42.806306, "lng": 140.691084, "confirmed": false}, {"name": "幼稚園前通", "lat": 42.806131, "lng": 140.689155, "confirmed": false}, {"name": "さくら団地北通", "lat": 42.806405, "lng": 140.699417, "confirmed": false}, {"name": "中学校東通", "lat": 42.805334, "lng": 140.69723, "confirmed": false}, {"name": "役場前通", "lat": 42.808316, "lng": 140.689503, "confirmed": true}, {"name": "羊蹄五号通", "lat": 42.808911, "lng": 140.693982, "confirmed": false}, {"name": "駅前東二線通", "lat": 42.809137, "lng": 140.687057, "confirmed": false}, {"name": "中央有島連絡線", "lat": 42.810538, "lng": 140.689827, "confirmed": false}, {"name": "東三条通", "lat": 42.805351, "lng": 140.689334, "confirmed": false}, {"name": "新市街東一条通", "lat": 42.804521, "lng": 140.692423, "confirmed": true}, {"name": "製麻会社通", "lat": 42.804427, "lng": 140.693388, "confirmed": true}]};
   const allMarkers = [];
   let editMode = false;
 
@@ -453,20 +528,21 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
     iconSize: [1,1],
     iconAnchor: [9,18]
   });
-  const roadMarker = L.marker([42.805369, 140.672998], {icon: roadIcon, draggable:false});
+  const roadPinsLayer = L.layerGroup().addTo(map);
+  const roadMarker = L.marker([42.811571, 140.655428], {icon: roadIcon, draggable:false});
   const roadItem = {marker: roadMarker, id:'road', label:'田下通', editable:true, locked: lockedIds.has('road')};
   bindLockToggle(roadItem);
-  roadMarker.addTo(map);
+  roadPinsLayer.addLayer(roadMarker);
   allMarkers.push(roadItem);
 
   // newly confirmed roads (道路情報検索デモに対応済み・詳細デモへリンク)
   const DETAIL_DEMO_URL = 'https://019ff9e1-9be5-c5e5-aa21-92cdd8857351.share.connect.posit.cloud/';
   const newRoads = [
-    {id:'road_fujiyama', label:'藤山北通', lat:42.831813, lng:140.635959},
-    {id:'road_shinshigai', label:'新市街東一条通', lat:42.804443, lng:140.687090},
-    {id:'road_yakubamae', label:'役場前通', lat:42.803707, lng:140.686136},
-    {id:'road_seima', label:'製麻会社通', lat:42.804494, lng:140.693024},
-    {id:'road_rubeshibe', label:'ルベシベ通', lat:42.797655, lng:140.666207},
+    {id:'road_fujiyama', label:'藤山北通', lat:42.831990, lng:140.637567},
+    {id:'road_shinshigai', label:'新市街東一条通', lat:42.804521, lng:140.692423},
+    {id:'road_yakubamae', label:'役場前通', lat:42.808011, lng:140.690230},
+    {id:'road_seima', label:'製麻会社通', lat:42.804427, lng:140.693388},
+    {id:'road_rubeshibe', label:'ルベシベ通', lat:42.791642, lng:140.640339},
   ];
   newRoads.forEach(function(r){
     const icon = L.divIcon({
@@ -478,9 +554,39 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
     const marker = L.marker([r.lat, r.lng], {icon: icon, draggable:false});
     const item = {marker: marker, id:r.id, label:r.label, editable:true, locked: lockedIds.has(r.id)};
     bindLockToggle(item);
-    marker.addTo(map);
+    roadPinsLayer.addLayer(marker);
     allMarkers.push(item);
   });
+
+  // 道路網図（管内図／市街図）表示中は、ピンの代わりに図面上の路線名表記そのものに
+  // カーソルを合わせると名称が出て、6路線は図面ページへ移動できるようにする
+  // （密集した文字の上にピンを重ねると見づらくなるため）。
+  function buildRouteHoverLayer(points){
+    const group = L.layerGroup();
+    points.forEach(function(p){
+      const confirmedClass = p.confirmed ? ' confirmed' : '';
+      const labelHtml = p.confirmed
+        ? (p.name + '<div class="rp-sub">クリックで図面を見る →</div>')
+        : p.name;
+      const html = '<div class="route-pin' + confirmedClass + '" tabindex="0">' +
+        '<span class="flabel">' + labelHtml + '</span><div class="dot"></div></div>';
+      const icon = L.divIcon({ className:'', html: html, iconSize:[1,1], iconAnchor:[5,5] });
+      const marker = L.marker([p.lat, p.lng], {icon: icon});
+      if(p.confirmed){
+        marker.on('add', function(){
+          const el = marker.getElement();
+          if(!el) return;
+          el.addEventListener('click', function(){
+            window.location.href = DETAIL_DEMO_URL + '?route=' + encodeURIComponent(p.name);
+          });
+        });
+      }
+      group.addLayer(marker);
+    });
+    return group;
+  }
+  const kannaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.kannai);
+  const shigaiHoverLayer = buildRouteHoverLayer(ROUTE_HOVER_DATA.shigai);
 
   // placeholders (approximate position, editable)
   const placeholders = [
@@ -622,6 +728,20 @@ const KANNAI_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcH
       alert('コピーできませんでした。テキストを選択して手動でコピーしてください。');
     }
   });
+
+  // 前回選んでいた地図の種類を復元する（道路台帳の詳細ページから戻ってきた場合など）
+  try {
+    const savedLayerName = localStorage.getItem(LAYER_KEY);
+    if(savedLayerName && baseMaps[savedLayerName] && baseMaps[savedLayerName] !== gsiLayer){
+      const targetLayer = baseMaps[savedLayerName];
+      Object.keys(baseMaps).forEach(function(k){
+        if(map.hasLayer(baseMaps[k])) map.removeLayer(baseMaps[k]);
+      });
+      map.addLayer(targetLayer);
+      activateLayer(targetLayer, 0);
+    }
+  } catch(err){}
+  layerPersistenceReady = true;
 })();
 </script>
 
